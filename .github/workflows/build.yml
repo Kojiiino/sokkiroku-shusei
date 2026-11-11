@@ -20,8 +20,9 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - id: sdk
-        uses: android-actions/setup-android@v3
+      - name: Check Android SDK
+        id: sdk
+        run: echo "ANDROID_HOME=$ANDROID_HOME" && ls "$ANDROID_HOME/platforms"
 
       - id: gradle
         uses: gradle/actions/setup-gradle@v4
