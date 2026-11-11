@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- 紙 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M36,30h28l8,8v40h-36z" />
+    <!-- 行 -->
+    <path
+        android:fillColor="#7FCCD9"
+        android:pathData="M41,44h26v3h-26zM41,52h26v3h-26zM41,60h18v3h-18z" />
+    <!-- 赤の印 -->
+    <path
+        android:fillColor="#EB3503"
+        android:pathData="M60,60h8v8h-8z" />
+</vector>
