@@ -18,6 +18,9 @@ import java.time.format.DateTimeFormatter
 
 enum class Screen { Files, Edit }
 
+/** 「ほかの箇所も直しますか」の提案 */
+class Proposal(val item: Item, val from: String, val to: String)
+
 class MainViewModel(app: Application) : AndroidViewModel(app) {
     var tokenProvider: (suspend () -> String)? = null
     var pickAudio: (() -> Unit)? = null
@@ -31,6 +34,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     var parsed by mutableStateOf<ParsedDoc?>(null)
     var showGray by mutableStateOf(false)
     var savedName by mutableStateOf<String?>(null)
+
+    // 同じ会議の中で使う置き換え（例：中継→中計）
+    var rules by mutableStateOf<List<Pair<String, String>>>(emptyList())
+    var proposal by mutableStateOf<Proposal?>(null)
 
     // 録音
     val player = AudioPlayer()
@@ -82,6 +89,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         showGray = false
         savedName = null
         loadDocPrefs(f.id)
+        loadRules()
+        applyRulesToItems()
+        proposal = null
         if (receivedPending) {
             attachReceived()
         } else {
@@ -97,7 +107,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         task {
             val folder = folderId ?: throw IllegalStateException("保存先のフォルダが分かりません")
             val t = token()
-            val html = withContext(Dispatchers.Default) { SokkiParser.build(pd.html, decisions) }
+            val rs = rules
+            val html = withContext(Dispatchers.Default) { SokkiParser.build(pd.html, decisions, rs) }
             var name = f.name + "_修正済"
             if (files.any { it.name == name }) {
                 name += "_" + LocalTime.now().format(DateTimeFormatter.ofPattern("HHmm"))
@@ -120,6 +131,73 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun finishSaved() {
         backToFiles()
         loadFiles()
+    }
+
+    // ---------- 直す・置き換え ----------
+
+    /** 「直す」を押したとき。ほかにも同じ語があれば、まとめて直すか提案する */
+    fun fixItem(item: Item) {
+        item.status = Status.FIXED
+        val pd = parsed ?: return
+        if (item.isFumei || item.original.isEmpty() || item.value == item.original) return
+        val (from, to) = SokkiParser.wordDiff(item.original, item.value)
+        if (from.isEmpty()) return
+        val others = pd.count(from) - (if (item.original.contains(from)) 1 else 0)
+        if (others > 0) proposal = Proposal(item, from, to)
+    }
+
+    fun applyRule(from: String, to: String) {
+        proposal = null
+        if (from.isEmpty() || from == to) return
+        rules = rules.filter { it.first != from } + (from to to)
+        applyRulesToItems()
+        saveRules()
+    }
+
+    fun removeRule(from: String) {
+        rules = rules.filter { it.first != from }
+        saveRules()
+    }
+
+    /** 未処理のカードのうち、置き換える語を含むものを直す */
+    private fun applyRulesToItems() {
+        val pd = parsed ?: return
+        for (item in pd.items) {
+            if (item.status != Status.PENDING || item.isFumei || item.original.isEmpty()) continue
+            for ((from, to) in rules) {
+                if (item.original.contains(from)) {
+                    item.value = item.original.replace(from, to)
+                    item.status = Status.FIXED
+                    break
+                }
+            }
+        }
+    }
+
+    /** パート01・02…は同じ会議として、置き換えを共有する */
+    private fun meetingKey(): String? =
+        current?.name?.substringBefore("_速記録")?.let { "rules:$it" }
+
+    private fun loadRules() {
+        rules = emptyList()
+        val key = meetingKey() ?: return
+        val s = prefs.getString(key, null) ?: return
+        try {
+            val a = JSONArray(s)
+            rules = (0 until a.length()).map {
+                val p = a.getJSONArray(it)
+                p.getString(0) to p.getString(1)
+            }
+        } catch (e: Exception) {
+            // 壊れた設定は無視する
+        }
+    }
+
+    private fun saveRules() {
+        val key = meetingKey() ?: return
+        val a = JSONArray()
+        rules.forEach { a.put(JSONArray().put(it.first).put(it.second)) }
+        prefs.edit().putString(key, a.toString()).apply()
     }
 
     // ---------- 録音の取り込み ----------

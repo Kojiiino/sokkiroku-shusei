@@ -254,6 +254,7 @@ fun EditScreen(vm: MainViewModel) {
                 Switch(checked = vm.showGray, onCheckedChange = { vm.showGray = it })
             }
             AudioPanel(vm)
+            RulesPanel(vm)
             if (visible.isEmpty()) {
                 Text("直す箇所はありません。", Modifier.padding(16.dp))
             }
@@ -261,6 +262,7 @@ fun EditScreen(vm: MainViewModel) {
                 items(visible, key = { it.id }) { item ->
                     ItemCard(
                         item = item,
+                        onFix = { vm.fixItem(item) },
                         estimate = vm.estimate(item.pos),
                         audioReady = vm.audioReady,
                         onPlay = { vm.playItem(item) },
@@ -273,6 +275,8 @@ fun EditScreen(vm: MainViewModel) {
             }
         }
     }
+
+    vm.proposal?.let { ProposalDialog(vm, it) }
 
     if (confirmBack) {
         AlertDialog(
@@ -409,8 +413,76 @@ fun AudioPanel(vm: MainViewModel) {
 }
 
 @Composable
+fun RulesPanel(vm: MainViewModel) {
+    val pd = vm.parsed ?: return
+    if (vm.rules.isEmpty()) return
+    Column(Modifier.fillMaxWidth().background(Blue80).padding(horizontal = 12.dp, vertical = 6.dp)) {
+        Text(
+            "この会議の置き換え（保存時に本文全体へ当てます。ほかのパートにも使います）",
+            fontSize = 12.sp,
+            color = Navy,
+        )
+        for ((from, to) in vm.rules) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "「$from」→「$to」（このパートに${pd.count(from)}か所）",
+                    Modifier.weight(1f),
+                    fontSize = 14.sp,
+                    color = Ink,
+                )
+                TextButton(onClick = { vm.removeRule(from) }) { Text("外す") }
+            }
+        }
+    }
+}
+
+@Composable
+fun ProposalDialog(vm: MainViewModel, p: Proposal) {
+    val pd = vm.parsed ?: return
+    var from by remember(p) { mutableStateOf(p.from) }
+    var to by remember(p) { mutableStateOf(p.to) }
+    val others = (pd.count(from) - (if (p.item.original.contains(from)) 1 else 0)).coerceAtLeast(0)
+    AlertDialog(
+        onDismissRequest = { vm.proposal = null },
+        title = { Text("ほかの箇所も直しますか") },
+        text = {
+            Column {
+                Text(
+                    "このパートのほかの箇所に「$from」が${others}か所あります。" +
+                        "すべて「$to」に直しますか。同じ会議のほかのパートを開いたときにも当てます。",
+                    fontSize = 14.sp,
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = from,
+                    onValueChange = { from = it },
+                    label = { Text("直す前の語") },
+                    singleLine = true,
+                )
+                OutlinedTextField(
+                    value = to,
+                    onValueChange = { to = it },
+                    label = { Text("直した後の語") },
+                    singleLine = true,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { vm.applyRule(from, to) },
+                enabled = from.isNotEmpty() && from != to,
+            ) { Text("すべて直す") }
+        },
+        dismissButton = {
+            TextButton(onClick = { vm.proposal = null }) { Text("この箇所だけ") }
+        },
+    )
+}
+
+@Composable
 fun ItemCard(
     item: Item,
+    onFix: () -> Unit,
     estimate: Long?,
     audioReady: Boolean,
     onPlay: () -> Unit,
@@ -458,7 +530,15 @@ fun ItemCard(
                 OutlinedTextField(
                     value = item.value,
                     onValueChange = { item.value = it },
-                    label = { Text(if (item.isFumei) "聞き取った内容" else "正しい語") },
+                    label = {
+                        Text(
+                            when {
+                                item.isFumei -> "聞き取った内容"
+                                item.isGray -> "直す部分（直前の語も含めて表示）"
+                                else -> "正しい語"
+                            }
+                        )
+                    },
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Row(
@@ -466,7 +546,7 @@ fun ItemCard(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Button(
-                        onClick = { item.status = Status.FIXED },
+                        onClick = onFix,
                         enabled = !(item.isFumei && item.value.isBlank()),
                     ) { Text("直す") }
                     OutlinedButton(onClick = { item.status = Status.KEEP }) {

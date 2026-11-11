@@ -42,7 +42,22 @@ class ParsedDoc(
     val items: List<Item>,
     /** 本文の文字数（タグを除く） */
     val totalChars: Int,
-)
+    /** 本文の文字列（タグを除く）。置き換えの件数を数えるのに使う */
+    val bodyText: String,
+    /** 本文の文字ノード。置き換えを本文全体に当てるのに使う */
+    val bodyNodes: List<TextNode>,
+) {
+    fun count(word: String): Int {
+        if (word.isEmpty()) return 0
+        var n = 0
+        var i = bodyText.indexOf(word)
+        while (i >= 0) {
+            n++
+            i = bodyText.indexOf(word, i + word.length)
+        }
+        return n
+    }
+}
 
 private data class Edit(val start: Int, val end: Int, val repl: String)
 
@@ -63,6 +78,8 @@ object SokkiParser {
         // 「本文」の見出しがあれば、そこから文字数を数える
         var inBody = blocks.none { isHeading(it) && it.text().trim() == "本文" }
         var cum = 0
+        val bodySb = StringBuilder()
+        val bodyNodes = mutableListOf<TextNode>()
         for (b in blocks) {
             // 処理メモ以降は本文ではないので対象外
             if (isHeading(b) && b.text().contains("処理メモ")) break
@@ -81,7 +98,12 @@ object SokkiParser {
             }
             val para = sb.toString()
             val paraBase = cum
-            if (inBody) cum += TAG_RE.replace(para, "").length
+            if (inBody) {
+                val plain = TAG_RE.replace(para, "")
+                cum += plain.length
+                bodySb.append(plain).append('\n')
+                bodyNodes.addAll(nodes)
+            }
             if (!TAG_RE.containsMatchIn(para)) continue
 
             nodes.forEachIndexed { i, n ->
@@ -135,11 +157,15 @@ object SokkiParser {
                 }
             }
         }
-        return ParsedDoc(html, doc, items, cum)
+        return ParsedDoc(html, doc, items, cum, bodySb.toString(), bodyNodes)
     }
 
     /** 修正内容を反映したHTMLを作る。元のHTMLから読み直して当てるので、何度呼んでも安全 */
-    fun build(html: String, decisions: List<Pair<Status, String>>): String {
+    fun build(
+        html: String,
+        decisions: List<Pair<Status, String>>,
+        rules: List<Pair<String, String>> = emptyList(),
+    ): String {
         val pd = parse(html)
         val edits = IdentityHashMap<TextNode, MutableList<Edit>>()
         fun add(n: TextNode, s: Int, e: Int, r: String) {
@@ -175,6 +201,15 @@ object SokkiParser {
             node.text(t)
         }
 
+        // 置き換えを本文全体に当てる（置き換え後の語が元の語を含むときは、二重に当たるので本文には当てない）
+        for ((from, to) in rules) {
+            if (from.isEmpty() || to.contains(from)) continue
+            for (n in pd.bodyNodes) {
+                val w = n.wholeText
+                if (w.contains(from)) n.text(w.replace(from, to))
+            }
+        }
+
         // 直した箇所は赤字・黄色の装飾を外す（未処理が残る装飾はそのまま）
         for (n in resolvedTagNodes) {
             if (pendingTagNodes.containsKey(n)) continue
@@ -185,6 +220,20 @@ object SokkiParser {
             }
         }
         return pd.doc.outerHtml()
+    }
+
+    /** 直す前と後の違う部分を取り出す。1文字だと他の語に当たりやすいので、2文字以上に広げる */
+    fun wordDiff(a: String, b: String): Pair<String, String> {
+        var p = 0
+        while (p < a.length && p < b.length && a[p] == b[p]) p++
+        var s = 0
+        while (s < a.length - p && s < b.length - p && a[a.length - 1 - s] == b[b.length - 1 - s]) s++
+        var ps = p
+        var se = s
+        while (a.length - ps - se < 2 && (ps > 0 || se > 0)) {
+            if (ps > 0) ps-- else se--
+        }
+        return a.substring(ps, a.length - se) to b.substring(ps, b.length - se)
     }
 
     private fun collect(n: Node, out: MutableList<TextNode>) {
