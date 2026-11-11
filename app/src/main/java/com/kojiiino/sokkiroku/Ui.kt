@@ -1,6 +1,5 @@
 package com.kojiiino.sokkiroku
 
-import android.content.Context
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
@@ -40,10 +39,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableLongStateOf
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.ClipboardManager
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
@@ -67,8 +67,6 @@ val Ink = Color(0xFF1C1C1C)
 val Accent = Color(0xFFEB3503)
 val Mark = Color(0xFFFCE7CC)
 val Gray90 = Color(0xFF5A5A5A)
-
-const val RECORDER_PKG = "com.google.android.apps.recorder"
 
 @Composable
 fun SokkiTheme(content: @Composable () -> Unit) {
@@ -142,6 +140,14 @@ fun FilesScreen(vm: MainViewModel) {
                 color = Gray90,
                 fontSize = 13.sp,
             )
+            if (vm.receivedPending) {
+                Text(
+                    "録音を受け取りました。この録音を使う速記録を選んでください。",
+                    Modifier.fillMaxWidth().background(Mark).padding(12.dp),
+                    color = Ink,
+                    fontSize = 14.sp,
+                )
+            }
             val names = vm.files.map { it.name }
             val list = vm.files.filter { !it.name.contains("修正済") }
             if (list.isEmpty() && vm.loadedOnce && !vm.busy) {
@@ -247,12 +253,22 @@ fun EditScreen(vm: MainViewModel) {
                 Text("灰色（語の誤変換の疑い）も表示", Modifier.weight(1f), fontSize = 14.sp)
                 Switch(checked = vm.showGray, onCheckedChange = { vm.showGray = it })
             }
+            AudioPanel(vm)
             if (visible.isEmpty()) {
                 Text("直す箇所はありません。", Modifier.padding(16.dp))
             }
             LazyColumn(Modifier.fillMaxSize()) {
                 items(visible, key = { it.id }) { item ->
-                    ItemCard(item) { openRecorder(ctx, item.searchKey, clip) }
+                    ItemCard(
+                        item = item,
+                        estimate = vm.estimate(item.pos),
+                        audioReady = vm.audioReady,
+                        onPlay = { vm.playItem(item) },
+                        onAnchor = {
+                            vm.setAnchor(item)
+                            Toast.makeText(ctx, "基準にしました", Toast.LENGTH_SHORT).show()
+                        },
+                    )
                 }
             }
         }
@@ -302,7 +318,104 @@ fun EditScreen(vm: MainViewModel) {
 }
 
 @Composable
-fun ItemCard(item: Item, onRecorder: () -> Unit) {
+fun AudioPanel(vm: MainViewModel) {
+    var showAdjust by remember { mutableStateOf(false) }
+    var pos by remember { mutableLongStateOf(0L) }
+    LaunchedEffect(vm.audioReady) {
+        while (vm.audioReady) {
+            pos = vm.player.position()
+            delay(500)
+        }
+    }
+    Column(
+        Modifier.fillMaxWidth().background(TitleBg).padding(horizontal = 12.dp, vertical = 6.dp)
+    ) {
+        if (vm.audioReady) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                OutlinedButton(onClick = { vm.player.skip(-10_000) }) { Text("－10秒") }
+                Spacer(Modifier.width(6.dp))
+                Button(onClick = { vm.player.toggle() }) {
+                    Text(if (vm.player.playing) "一時停止" else "再生")
+                }
+                Spacer(Modifier.width(6.dp))
+                OutlinedButton(onClick = { vm.player.skip(10_000) }) { Text("＋10秒") }
+                Spacer(Modifier.weight(1f))
+                Text(
+                    "${fmtTime(pos)}／${fmtTime(vm.durationMs ?: 0L)}",
+                    fontSize = 13.sp,
+                    color = Ink,
+                )
+            }
+        } else {
+            Text(
+                "録音を取り込むと、各箇所を聞けます。レコーダーで録音を開き、" +
+                    "「共有 → ファイル → 音声」でこのアプリを選んでください。",
+                fontSize = 13.sp,
+                color = Ink,
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = { vm.pickAudio?.invoke() }) { Text("ファイルから選ぶ") }
+                Spacer(Modifier.weight(1f))
+                OutlinedTextField(
+                    value = vm.manualMinutes,
+                    onValueChange = {
+                        vm.manualMinutes = it
+                        vm.saveDocPrefs()
+                    },
+                    label = { Text("録音の長さ（分）") },
+                    singleLine = true,
+                    modifier = Modifier.width(150.dp),
+                )
+            }
+        }
+        TextButton(onClick = { showAdjust = !showAdjust }) {
+            Text(if (showAdjust) "位置の調整を閉じる" else "位置の調整（パート分けのとき）")
+        }
+        if (showAdjust) {
+            Text(
+                "この速記録が録音の途中から始まる場合（パート02など）は、開始と終了を分で入れます。",
+                fontSize = 12.sp,
+                color = Gray90,
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    value = vm.startMin,
+                    onValueChange = {
+                        vm.startMin = it
+                        vm.saveDocPrefs()
+                    },
+                    label = { Text("開始（分）") },
+                    singleLine = true,
+                    modifier = Modifier.width(110.dp),
+                )
+                Spacer(Modifier.width(8.dp))
+                OutlinedTextField(
+                    value = vm.endMin,
+                    onValueChange = {
+                        vm.endMin = it
+                        vm.saveDocPrefs()
+                    },
+                    label = { Text("終了（分）") },
+                    singleLine = true,
+                    modifier = Modifier.width(110.dp),
+                )
+                Spacer(Modifier.weight(1f))
+                TextButton(onClick = { vm.resetAnchors() }, enabled = vm.anchors.isNotEmpty()) {
+                    Text("基準${vm.anchors.size}件を消す")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun ItemCard(
+    item: Item,
+    estimate: Long?,
+    audioReady: Boolean,
+    onPlay: () -> Unit,
+    onAnchor: () -> Unit,
+) {
     val accent = if (item.isGray) Gray90 else Accent
     val pending = item.status == Status.PENDING
     Card(
@@ -324,6 +437,22 @@ fun ItemCard(item: Item, onRecorder: () -> Unit) {
             }
             Spacer(Modifier.height(8.dp))
             Text(contextText(item), fontSize = 15.sp, lineHeight = 24.sp, color = Ink)
+            if (estimate != null) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (audioReady) {
+                        TextButton(onClick = onPlay) { Text("約${fmtTime(estimate)}から聞く") }
+                        Spacer(Modifier.weight(1f))
+                        TextButton(onClick = onAnchor) { Text("今の再生位置を基準に") }
+                    } else {
+                        Text(
+                            "録音の約${fmtTime(estimate)}あたり",
+                            fontSize = 13.sp,
+                            color = Navy,
+                            modifier = Modifier.padding(vertical = 6.dp),
+                        )
+                    }
+                }
+            }
             Spacer(Modifier.height(8.dp))
             if (pending) {
                 OutlinedTextField(
@@ -343,7 +472,6 @@ fun ItemCard(item: Item, onRecorder: () -> Unit) {
                     OutlinedButton(onClick = { item.status = Status.KEEP }) {
                         Text(if (item.isFumei) "不明のまま" else "このまま")
                     }
-                    TextButton(onClick = onRecorder) { Text("録音") }
                 }
             } else {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -380,21 +508,6 @@ private fun contextText(item: Item): AnnotatedString = buildAnnotatedString {
         )
     ) { append(item.mid) }
     append(item.after)
-}
-
-private fun openRecorder(ctx: Context, key: String, clip: ClipboardManager) {
-    if (key.isNotBlank()) clip.setText(AnnotatedString(key))
-    val intent = ctx.packageManager.getLaunchIntentForPackage(RECORDER_PKG)
-    if (intent == null) {
-        Toast.makeText(ctx, "レコーダーが見つかりません", Toast.LENGTH_SHORT).show()
-        return
-    }
-    Toast.makeText(
-        ctx,
-        "「$key」をコピーしました。レコーダーで録音を開き、検索に貼り付けてください",
-        Toast.LENGTH_LONG,
-    ).show()
-    ctx.startActivity(intent)
 }
 
 private fun formatTime(s: String): String = try {

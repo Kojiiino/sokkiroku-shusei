@@ -1,5 +1,8 @@
 package com.kojiiino.sokkiroku
 
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -41,6 +44,30 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private val pickLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) vm.receiveAudio(uri)
+    }
+
+    /** レコーダーの「共有」で送られてきた録音を受け取る */
+    private fun handleShare(intent: Intent?) {
+        if (intent?.action != Intent.ACTION_SEND) return
+        val uri: Uri? = if (Build.VERSION.SDK_INT >= 33) {
+            intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            intent.getParcelableExtra(Intent.EXTRA_STREAM)
+        }
+        if (uri != null) vm.receiveAudio(uri)
+        intent.action = null
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleShare(intent)
+    }
+
     /** ドライブ用のアクセストークン。許可済みなら画面を出さずに返る */
     private suspend fun driveToken(): String = suspendCancellableCoroutine { cont ->
         val req = AuthorizationRequest.builder()
@@ -69,6 +96,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         vm.tokenProvider = { driveToken() }
+        vm.pickAudio = { pickLauncher.launch(arrayOf("audio/*")) }
+        handleShare(intent)
         setContent {
             SokkiTheme {
                 App(vm)

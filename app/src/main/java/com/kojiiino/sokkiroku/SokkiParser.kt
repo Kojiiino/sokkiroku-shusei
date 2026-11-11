@@ -29,12 +29,20 @@ class Item(
     val mid: String,
     val after: String,
     val searchKey: String,
+    /** 本文の先頭からの文字位置（タグを除く）。録音の時刻の見積もりに使う */
+    val pos: Int,
 ) {
     var status by mutableStateOf(Status.PENDING)
     var value by mutableStateOf(if (isFumei) "" else original)
 }
 
-class ParsedDoc(val html: String, val doc: Document, val items: List<Item>)
+class ParsedDoc(
+    val html: String,
+    val doc: Document,
+    val items: List<Item>,
+    /** 本文の文字数（タグを除く） */
+    val totalChars: Int,
+)
 
 private data class Edit(val start: Int, val end: Int, val repl: String)
 
@@ -51,9 +59,17 @@ object SokkiParser {
         val items = mutableListOf<Item>()
         var id = 0
         val blocks = doc.body().select(BLOCKS).filter { it.select(BLOCKS).size == 1 }
+        val isHeading = { e: Element -> e.tagName().matches(Regex("h[1-6]")) }
+        // 「本文」の見出しがあれば、そこから文字数を数える
+        var inBody = blocks.none { isHeading(it) && it.text().trim() == "本文" }
+        var cum = 0
         for (b in blocks) {
             // 処理メモ以降は本文ではないので対象外
-            if (b.tagName().matches(Regex("h[1-6]")) && b.text().contains("処理メモ")) break
+            if (isHeading(b) && b.text().contains("処理メモ")) break
+            if (isHeading(b) && b.text().trim() == "本文") {
+                inBody = true
+                continue
+            }
             val nodes = mutableListOf<TextNode>()
             collect(b, nodes)
             if (nodes.isEmpty()) continue
@@ -64,6 +80,8 @@ object SokkiParser {
                 sb.append(n.wholeText)
             }
             val para = sb.toString()
+            val paraBase = cum
+            if (inBody) cum += TAG_RE.replace(para, "").length
             if (!TAG_RE.containsMatchIn(para)) continue
 
             nodes.forEachIndexed { i, n ->
@@ -111,12 +129,13 @@ object SokkiParser {
                         mid = para.substring(absStart, absEnd),
                         after = after,
                         searchKey = searchKey(before, after),
+                        pos = paraBase + TAG_RE.replace(para.substring(0, absStart), "").length,
                     )
                     segStart = m.range.last + 1
                 }
             }
         }
-        return ParsedDoc(html, doc, items)
+        return ParsedDoc(html, doc, items, cum)
     }
 
     /** 修正内容を反映したHTMLを作る。元のHTMLから読み直して当てるので、何度呼んでも安全 */
