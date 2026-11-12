@@ -39,6 +39,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     var rules by mutableStateOf<List<Pair<String, String>>>(emptyList())
     var proposal by mutableStateOf<Proposal?>(null)
 
+    // 一時保存（途中の作業）
+    var restoredCount by mutableStateOf(0)
+    var draftIds by mutableStateOf<Set<String>>(emptySet())
+
     // 録音
     val player = AudioPlayer()
     var audioReady by mutableStateOf(false)
@@ -77,6 +81,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val f = folderId ?: withContext(Dispatchers.IO) { Drive.findFolder(t) }
         folderId = f
         files = withContext(Dispatchers.IO) { Drive.listFiles(t, f) }
+        draftIds = files.map { it.id }.filter { prefs.contains("draft:$it") }.toSet()
         loadedOnce = true
     }
 
@@ -90,6 +95,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         savedName = null
         loadDocPrefs(f.id)
         loadRules()
+        restoredCount = restoreDraft()
         applyRulesToItems()
         proposal = null
         if (receivedPending) {
@@ -114,11 +120,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 name += "_" + LocalTime.now().format(DateTimeFormatter.ofPattern("HHmm"))
             }
             withContext(Dispatchers.IO) { Drive.createDoc(t, folder, name, html) }
+            clearDraft()
             savedName = name
         }
     }
 
     fun backToFiles() {
+        saveDraft()
         player.release()
         audioReady = false
         durationMs = null
@@ -198,6 +206,74 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val a = JSONArray()
         rules.forEach { a.put(JSONArray().put(it.first).put(it.second)) }
         prefs.edit().putString(key, a.toString()).apply()
+    }
+
+    // ---------- 一時保存 ----------
+
+    private fun draftKey() = current?.id?.let { "draft:$it" }
+
+    /** 途中の作業をスマホの中に保存する（ドライブには保存しない） */
+    fun saveDraft() {
+        val key = draftKey() ?: return
+        val pd = parsed ?: return
+        if (savedName != null) return
+        if (pd.items.none { it.status != Status.PENDING }) {
+            prefs.edit().remove(key).apply()
+            draftIds = draftIds - key.removePrefix("draft:")
+            return
+        }
+        val a = JSONArray()
+        pd.items.forEach { a.put(JSONArray().put(it.status.name).put(it.value).put(it.original)) }
+        val o = JSONObject().put("modified", current?.modified ?: "").put("items", a)
+        prefs.edit().putString(key, o.toString()).apply()
+        draftIds = draftIds + key.removePrefix("draft:")
+    }
+
+    /** 一時保存があれば戻す。戻した件数を返す */
+    private fun restoreDraft(): Int {
+        val key = draftKey() ?: return 0
+        val pd = parsed ?: return 0
+        val s = prefs.getString(key, null) ?: return 0
+        return try {
+            val o = JSONObject(s)
+            val a = o.getJSONArray("items")
+            // 速記録が別の場所で直されていたら、箇所の対応がずれるので使わない
+            if (o.optString("modified") != (current?.modified ?: "") || a.length() != pd.items.size) {
+                prefs.edit().remove(key).apply()
+                message = "速記録がドライブ上で変わっていたため、一時保存は使えませんでした"
+                return 0
+            }
+            var n = 0
+            pd.items.forEachIndexed { i, item ->
+                val e = a.getJSONArray(i)
+                if (e.getString(2) != item.original) return@forEachIndexed
+                val st = Status.valueOf(e.getString(0))
+                item.value = e.getString(1)
+                item.status = st
+                if (st != Status.PENDING) n++
+            }
+            n
+        } catch (e: Exception) {
+            0
+        }
+    }
+
+    /** 一時保存を捨てて、最初からやり直す */
+    fun discardDraft() {
+        val pd = parsed ?: return
+        clearDraft()
+        pd.items.forEach {
+            it.status = Status.PENDING
+            it.value = if (it.isFumei) "" else it.original
+        }
+        applyRulesToItems()
+    }
+
+    private fun clearDraft() {
+        val key = draftKey() ?: return
+        prefs.edit().remove(key).apply()
+        draftIds = draftIds - key.removePrefix("draft:")
+        restoredCount = 0
     }
 
     // ---------- 録音の取り込み ----------

@@ -39,6 +39,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.mutableLongStateOf
 import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
@@ -175,6 +176,15 @@ fun FilesScreen(vm: MainViewModel) {
                             Spacer(Modifier.height(4.dp))
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(formatTime(f.modified), color = Gray90, fontSize = 13.sp)
+                                if (f.id in vm.draftIds) {
+                                    Spacer(Modifier.width(10.dp))
+                                    Text(
+                                        "作業途中",
+                                        color = Accent,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Bold,
+                                    )
+                                }
                                 if (done) {
                                     Spacer(Modifier.width(10.dp))
                                     Text(
@@ -205,8 +215,16 @@ fun EditScreen(vm: MainViewModel) {
     val pendingCount = visible.count { it.status == Status.PENDING }
     val touched = pd.items.any { it.status != Status.PENDING }
 
+    // 変更のたびに一時保存する
+    LaunchedEffect(pd) {
+        snapshotFlow { pd.items.map { it.status to it.value } }.collect { vm.saveDraft() }
+    }
+
     fun goBack() {
-        if (touched && vm.savedName == null) confirmBack = true else vm.backToFiles()
+        if (touched && vm.savedName == null) {
+            Toast.makeText(ctx, "途中の作業を一時保存しました", Toast.LENGTH_SHORT).show()
+        }
+        vm.backToFiles()
     }
     BackHandler { goBack() }
 
@@ -231,11 +249,19 @@ fun EditScreen(vm: MainViewModel) {
         bottomBar = {
             BottomAppBar(containerColor = TitleBg) {
                 Text(
-                    "未処理 $pendingCount 件／全 ${visible.size} 件",
+                    "未処理 $pendingCount／${visible.size}件",
                     Modifier.weight(1f).padding(start = 16.dp),
                     color = Ink,
                     fontSize = 15.sp,
                 )
+                OutlinedButton(
+                    onClick = {
+                        vm.saveDraft()
+                        Toast.makeText(ctx, "一時保存しました（スマホ内）", Toast.LENGTH_SHORT).show()
+                    },
+                    enabled = touched,
+                    modifier = Modifier.padding(end = 6.dp),
+                ) { Text("一時保存") }
                 Button(
                     onClick = { vm.save() },
                     enabled = !vm.busy && touched,
@@ -252,6 +278,20 @@ fun EditScreen(vm: MainViewModel) {
             ) {
                 Text("灰色（語の誤変換の疑い）も表示", Modifier.weight(1f), fontSize = 14.sp)
                 Switch(checked = vm.showGray, onCheckedChange = { vm.showGray = it })
+            }
+            if (vm.restoredCount > 0) {
+                Row(
+                    Modifier.fillMaxWidth().background(Mark).padding(horizontal = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        "一時保存から${vm.restoredCount}件を戻しました",
+                        Modifier.weight(1f),
+                        fontSize = 13.sp,
+                        color = Ink,
+                    )
+                    TextButton(onClick = { vm.discardDraft() }) { Text("最初からやり直す") }
+                }
             }
             AudioPanel(vm)
             RulesPanel(vm)
