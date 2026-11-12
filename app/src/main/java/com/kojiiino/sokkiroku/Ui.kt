@@ -456,21 +456,35 @@ fun AudioPanel(vm: MainViewModel) {
 fun RulesPanel(vm: MainViewModel) {
     val pd = vm.parsed ?: return
     if (vm.rules.isEmpty()) return
-    Column(Modifier.fillMaxWidth().background(Blue80).padding(horizontal = 12.dp, vertical = 6.dp)) {
-        Text(
-            "この会議の置き換え（保存時に本文全体へ当てます。ほかのパートにも使います）",
-            fontSize = 12.sp,
-            color = Navy,
-        )
-        for ((from, to) in vm.rules) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    "「$from」→「$to」（このパートに${pd.count(from)}か所）",
-                    Modifier.weight(1f),
-                    fontSize = 14.sp,
-                    color = Ink,
-                )
-                TextButton(onClick = { vm.removeRule(from) }) { Text("外す") }
+    // ふだんは1行に畳んでおく
+    var open by remember { mutableStateOf(false) }
+    Column(Modifier.fillMaxWidth().background(Blue80).padding(horizontal = 12.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "この会議の置き換え ${vm.rules.size}件",
+                Modifier.weight(1f),
+                fontSize = 13.sp,
+                color = Navy,
+                fontWeight = FontWeight.Bold,
+            )
+            TextButton(onClick = { open = !open }) { Text(if (open) "閉じる ▲" else "開く ▼") }
+        }
+        if (open) {
+            Text(
+                "保存時に本文全体へ当てます。同じ会議のほかのパートにも使います。",
+                fontSize = 12.sp,
+                color = Navy,
+            )
+            for ((from, to) in vm.rules) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "「$from」→「$to」（このパートに${pd.count(from)}か所）",
+                        Modifier.weight(1f),
+                        fontSize = 14.sp,
+                        color = Ink,
+                    )
+                    TextButton(onClick = { vm.removeRule(from) }) { Text("外す") }
+                }
             }
         }
     }
