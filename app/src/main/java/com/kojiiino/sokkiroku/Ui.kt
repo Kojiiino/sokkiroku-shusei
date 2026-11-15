@@ -94,6 +94,7 @@ fun App(vm: MainViewModel) {
         Screen.Files -> FilesScreen(vm)
         Screen.Edit -> EditScreen(vm)
         Screen.Dict -> DictScreen(vm)
+        Screen.Speaker -> SpeakerScreen(vm)
     }
     val msg = vm.message
     if (msg != null) {
@@ -220,7 +221,7 @@ fun EditScreen(vm: MainViewModel) {
 
     val visible = pd.items.filter { vm.showGray || !it.isGray }
     val pendingCount = visible.count { it.status == Status.PENDING }
-    val touched = pd.items.any { it.status != Status.PENDING }
+    val touched = pd.items.any { it.status != Status.PENDING } || vm.spk.isNotEmpty()
 
     // 変更のたびに一時保存する
     LaunchedEffect(pd) {
@@ -251,6 +252,12 @@ fun EditScreen(vm: MainViewModel) {
                     )
                 },
                 colors = barColors(),
+                actions = {
+                    TextButton(onClick = { vm.openSpeaker() }) {
+                        val n = vm.spk.size
+                        Text(if (n > 0) "話者づけ($n)" else "話者づけ", color = Color.White)
+                    }
+                },
             )
         },
         bottomBar = {
@@ -840,5 +847,136 @@ private fun ChoiceButton(label: String, on: Boolean, onClick: () -> Unit) {
         Button(onClick = onClick) { Text(label, fontSize = 13.sp) }
     } else {
         OutlinedButton(onClick = onClick) { Text(label, fontSize = 13.sp) }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SpeakerScreen(vm: MainViewModel) {
+    val pd = vm.parsed ?: return
+    BackHandler { vm.screen = Screen.Edit }
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("話者づけ") },
+                colors = barColors(),
+                navigationIcon = {
+                    TextButton(onClick = { vm.screen = Screen.Edit }) {
+                        Text("戻る", color = Color.White)
+                    }
+                },
+                actions = {
+                    if (vm.audioReady) {
+                        TextButton(onClick = { vm.player.toggle() }) {
+                            Text(if (vm.player.playing) "停止" else "再生", color = Color.White)
+                        }
+                    }
+                },
+            )
+        },
+        bottomBar = {
+            BottomAppBar(containerColor = TitleBg) {
+                val done = vm.spk.size
+                Text(
+                    "印を付けた段落 $done／${pd.paras.size}",
+                    Modifier.padding(start = 16.dp).weight(1f),
+                    color = Navy,
+                    fontWeight = FontWeight.Bold,
+                )
+                Button(
+                    onClick = { vm.screen = Screen.Edit },
+                    modifier = Modifier.padding(end = 12.dp),
+                ) { Text("修正画面へ戻る") }
+            }
+        },
+    ) { pad ->
+        Column(Modifier.padding(pad).fillMaxSize()) {
+            Text(
+                "段落ごとに、先方か当社かを選びます。保存すると、段落の頭に【先】【当】が付きます。" +
+                    "分からない段落は何も付けず、議事録でも話者を決めません。",
+                Modifier.fillMaxWidth().background(TitleBg).padding(10.dp),
+                fontSize = 13.sp,
+                color = Gray90,
+            )
+            LazyColumn(Modifier.fillMaxSize()) {
+                items(pd.paras, key = { it.index }) { p -> ParaCard(vm, p) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ParaCard(vm: MainViewModel, p: Para) {
+    val cur = vm.spk[p.index] ?: Spk.NONE
+    val est = vm.estimate(p.pos)
+    Card(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = when (cur) {
+                Spk.SEN -> Color(0xFFE8F4F7)
+                Spk.TOU -> Color(0xFFFFF4E5)
+                else -> Color.White
+            }
+        ),
+        border = BorderStroke(1.dp, Blue80),
+    ) {
+        Column(Modifier.padding(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("${p.index + 1}", color = Gray90, fontSize = 12.sp)
+                Spacer(Modifier.width(8.dp))
+                if (est != null) {
+                    Text("約${fmtTime(est)}", color = Gray90, fontSize = 12.sp)
+                    if (vm.audioReady) {
+                        TextButton(onClick = { vm.playPara(p) }) { Text("聞く", fontSize = 13.sp) }
+                    }
+                }
+                Spacer(Modifier.weight(1f))
+                if (cur != Spk.NONE) {
+                    Text(
+                        when (cur) {
+                            Spk.SEN -> "先方"
+                            Spk.TOU -> "当社"
+                            else -> "不明のまま"
+                        },
+                        color = Navy,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp,
+                    )
+                }
+            }
+            Text(
+                p.text,
+                fontSize = 14.sp,
+                color = Ink,
+                maxLines = 4,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(Modifier.height(4.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                SpkButton("先方", cur == Spk.SEN) {
+                    vm.setSpk(p.index, if (cur == Spk.SEN) Spk.NONE else Spk.SEN)
+                }
+                SpkButton("当社", cur == Spk.TOU) {
+                    vm.setSpk(p.index, if (cur == Spk.TOU) Spk.NONE else Spk.TOU)
+                }
+                SpkButton("不明", cur == Spk.SKIP) {
+                    vm.setSpk(p.index, if (cur == Spk.SKIP) Spk.NONE else Spk.SKIP)
+                }
+                SpkButton("前と逆", false) { vm.flipFromPrevious(p.index) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SpkButton(label: String, on: Boolean, onClick: () -> Unit) {
+    if (on) {
+        Button(onClick = onClick, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp)) {
+            Text(label, fontSize = 13.sp)
+        }
+    } else {
+        OutlinedButton(onClick = onClick, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp)) {
+            Text(label, fontSize = 13.sp)
+        }
     }
 }

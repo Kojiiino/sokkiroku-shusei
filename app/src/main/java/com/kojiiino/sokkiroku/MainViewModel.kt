@@ -3,6 +3,7 @@ package com.kojiiino.sokkiroku
 import android.app.Application
 import android.net.Uri
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
@@ -17,7 +18,7 @@ import java.time.LocalDate
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 
-enum class Screen { Files, Edit, Dict }
+enum class Screen { Files, Edit, Dict, Speaker }
 
 /** 「ほかの箇所も直しますか」の提案 */
 class Proposal(val item: Item, val from: String, val to: String)
@@ -54,6 +55,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     var startMin by mutableStateOf("")
     var endMin by mutableStateOf("")
     var anchors by mutableStateOf<List<Pair<Int, Long>>>(emptyList())
+
+    // 話者づけ（段落の番号 → 先方／当社）
+    val spk = mutableStateMapOf<Int, Spk>()
 
     // 辞書候補
     var cands by mutableStateOf<List<Cand>>(emptyList())
@@ -105,6 +109,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         loadDocPrefs(f.id)
         loadRules()
         restoredCount = restoreDraft()
+        loadSpk()
         applyRulesToItems()
         proposal = null
         if (receivedPending) {
@@ -123,7 +128,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val folder = folderId ?: throw IllegalStateException("保存先のフォルダが分かりません")
             val t = token()
             val rs = rules
-            val html = withContext(Dispatchers.Default) { SokkiParser.build(pd.html, decisions, rs) }
+            val marks = spk.mapValues { it.value.mark }
+            val html = withContext(Dispatchers.Default) {
+                SokkiParser.build(pd.html, decisions, rs, marks)
+            }
             var name = f.name + "_修正済"
             if (files.any { it.name == name }) {
                 name += "_" + LocalTime.now().format(DateTimeFormatter.ofPattern("HHmm"))
@@ -131,6 +139,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             withContext(Dispatchers.IO) { Drive.createDoc(t, folder, name, html) }
             addToPool(DictCodec.collect(pd, rs))
             clearDraft()
+            clearSpk()
             savedName = name
         }
     }
@@ -149,6 +158,65 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun finishSaved() {
         backToFiles()
         loadFiles()
+    }
+
+    // ---------- 話者づけ ----------
+
+    private fun spkKey() = current?.id?.let { "spk:$it" }
+
+    fun setSpk(i: Int, v: Spk) {
+        if (v == Spk.NONE) spk.remove(i) else spk[i] = v
+        saveSpk()
+    }
+
+    /** 直前の段落と逆の話者にする（質問と回答が交互に続く場面向け） */
+    fun flipFromPrevious(i: Int) {
+        val prev = parsed?.paras?.take(i)?.reversed()
+            ?.firstNotNullOfOrNull { spk[it.index]?.takeIf { v -> v == Spk.SEN || v == Spk.TOU } }
+            ?: return
+        setSpk(i, if (prev == Spk.SEN) Spk.TOU else Spk.SEN)
+    }
+
+    private fun saveSpk() {
+        val key = spkKey() ?: return
+        if (spk.isEmpty()) {
+            prefs.edit().remove(key).apply()
+            return
+        }
+        val o = JSONObject()
+        spk.forEach { (i, v) -> o.put(i.toString(), v.name) }
+        prefs.edit().putString(key, o.toString()).apply()
+    }
+
+    private fun loadSpk() {
+        spk.clear()
+        val key = spkKey() ?: return
+        val s = prefs.getString(key, null) ?: return
+        try {
+            val o = JSONObject(s)
+            val n = parsed?.paras?.size ?: 0
+            o.keys().forEach { k ->
+                val i = k.toInt()
+                if (i in 0 until n) spk[i] = Spk.valueOf(o.getString(k))
+            }
+        } catch (e: Exception) {
+            // 壊れた設定は無視する
+        }
+    }
+
+    private fun clearSpk() {
+        val key = spkKey() ?: return
+        prefs.edit().remove(key).apply()
+        spk.clear()
+    }
+
+    fun openSpeaker() {
+        screen = Screen.Speaker
+    }
+
+    fun playPara(p: Para) {
+        val t = estimate(p.pos) ?: return
+        player.playFrom((t - 3_000).coerceAtLeast(0))
     }
 
     // ---------- 辞書候補 ----------

@@ -12,6 +12,18 @@ import java.util.IdentityHashMap
 
 enum class Status { PENDING, FIXED, KEEP }
 
+/** 話者づけの印。先方＝【先】、当社＝【当】。SKIPは印を付けない（話者が分からない） */
+enum class Spk(val mark: String) { NONE(""), SEN("【先】"), TOU("【当】"), SKIP("") }
+
+/** 本文の段落1つ（話者が替わるたびに区切られている） */
+class Para(
+    val index: Int,
+    val text: String,
+    /** 本文の先頭からの文字位置。録音の時刻の見積もりに使う */
+    val pos: Int,
+    val block: Element,
+)
+
 /** 速記録の中の要確認箇所1件 */
 class Item(
     val id: Int,
@@ -48,6 +60,7 @@ class ParsedDoc(
     val bodyText: String,
     /** 本文の文字ノード。置き換えを本文全体に当てるのに使う */
     val bodyNodes: List<TextNode>,
+    val paras: List<Para> = emptyList(),
 ) {
     fun count(word: String): Int {
         if (word.isEmpty()) return 0
@@ -82,6 +95,7 @@ object SokkiParser {
         var cum = 0
         val bodySb = StringBuilder()
         val bodyNodes = mutableListOf<TextNode>()
+        val paras = mutableListOf<Para>()
         for (b in blocks) {
             // 処理メモ以降は本文ではないので対象外
             if (isHeading(b) && b.text().contains("処理メモ")) break
@@ -105,6 +119,10 @@ object SokkiParser {
                 cum += plain.length
                 bodySb.append(plain).append('\n')
                 bodyNodes.addAll(nodes)
+                val pt = plain.trim()
+                if (b.tagName() == "p" && pt.isNotEmpty() && pt != "【続く】") {
+                    paras += Para(paras.size, pt, paraBase, b)
+                }
             }
             if (!TAG_RE.containsMatchIn(para)) continue
 
@@ -163,7 +181,7 @@ object SokkiParser {
                 }
             }
         }
-        return ParsedDoc(html, doc, items, cum, bodySb.toString(), bodyNodes)
+        return ParsedDoc(html, doc, items, cum, bodySb.toString(), bodyNodes, paras)
     }
 
     /** 修正内容を反映したHTMLを作る。元のHTMLから読み直して当てるので、何度呼んでも安全 */
@@ -171,6 +189,7 @@ object SokkiParser {
         html: String,
         decisions: List<Pair<Status, String>>,
         rules: List<Pair<String, String>> = emptyList(),
+        marks: Map<Int, String> = emptyMap(),
     ): String {
         val pd = parse(html)
         val edits = IdentityHashMap<TextNode, MutableList<Edit>>()
@@ -224,6 +243,13 @@ object SokkiParser {
                 p.removeAttr("class")
                 p.removeAttr("style")
             }
+        }
+        // 話者の印を、段落の頭に付ける
+        for ((i, m) in marks) {
+            if (m.isEmpty()) continue
+            val para = pd.paras.getOrNull(i) ?: continue
+            val span = Element("span").attr("style", "color:#007086;font-weight:bold").text(m)
+            para.block.prependChild(span)
         }
         return pd.doc.outerHtml()
     }
