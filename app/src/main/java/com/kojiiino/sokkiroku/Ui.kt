@@ -317,6 +317,7 @@ fun EditScreen(vm: MainViewModel) {
     }
 
     vm.proposal?.let { ProposalDialog(vm, it) }
+    if (vm.showSearch) SearchDialog(vm)
 
     if (confirmBack) {
         AlertDialog(
@@ -455,19 +456,21 @@ fun AudioPanel(vm: MainViewModel) {
 @Composable
 fun RulesPanel(vm: MainViewModel) {
     val pd = vm.parsed ?: return
-    if (vm.rules.isEmpty()) return
     // ふだんは1行に畳んでおく
     var open by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth().background(Blue80).padding(horizontal = 12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
-                "この会議の置き換え ${vm.rules.size}件",
+                "置き換え ${vm.rules.size}件",
                 Modifier.weight(1f),
                 fontSize = 13.sp,
                 color = Navy,
                 fontWeight = FontWeight.Bold,
             )
-            TextButton(onClick = { open = !open }) { Text(if (open) "閉じる ▲" else "開く ▼") }
+            TextButton(onClick = { vm.showSearch = true }) { Text("検索して置換") }
+            if (vm.rules.isNotEmpty()) {
+                TextButton(onClick = { open = !open }) { Text(if (open) "閉じる ▲" else "開く ▼") }
+            }
         }
         if (open) {
             Text(
@@ -488,6 +491,56 @@ fun RulesPanel(vm: MainViewModel) {
             }
         }
     }
+}
+
+@Composable
+fun SearchDialog(vm: MainViewModel) {
+    val pd = vm.parsed ?: return
+    var from by remember { mutableStateOf("") }
+    var to by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = { vm.showSearch = false },
+        title = { Text("検索して置換") },
+        text = {
+            Column {
+                Text(
+                    "印の付いていない誤りも直せます。保存時に本文全体へ当て、" +
+                        "同じ会議のほかのパートにも使います。",
+                    fontSize = 13.sp,
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = from,
+                    onValueChange = { from = it },
+                    label = { Text("探す語") },
+                    singleLine = true,
+                )
+                Text(
+                    if (from.isEmpty()) "" else "このパートに${pd.count(from)}か所",
+                    fontSize = 13.sp,
+                    color = Navy,
+                )
+                OutlinedTextField(
+                    value = to,
+                    onValueChange = { to = it },
+                    label = { Text("置き換える語") },
+                    singleLine = true,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    vm.applyRule(from, to)
+                    vm.showSearch = false
+                },
+                enabled = from.isNotEmpty() && from != to && pd.count(from) > 0,
+            ) { Text("すべて置換") }
+        },
+        dismissButton = {
+            TextButton(onClick = { vm.showSearch = false }) { Text("やめる") }
+        },
+    )
 }
 
 @Composable
@@ -581,6 +634,15 @@ fun ItemCard(
             }
             Spacer(Modifier.height(8.dp))
             if (pending) {
+                if (item.candidate.isNotEmpty()) {
+                    Button(
+                        onClick = {
+                            item.value = item.candidate
+                            onFix()
+                        },
+                        modifier = Modifier.padding(bottom = 6.dp),
+                    ) { Text("候補「${item.candidate}」にする") }
+                }
                 OutlinedTextField(
                     value = item.value,
                     onValueChange = { item.value = it },

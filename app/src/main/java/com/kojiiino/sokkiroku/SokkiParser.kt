@@ -31,6 +31,8 @@ class Item(
     val searchKey: String,
     /** 本文の先頭からの文字位置（タグを除く）。録音の時刻の見積もりに使う */
     val pos: Int,
+    /** 速記録が示した修正候補（[要確認:語の誤変換の疑い→候補]）。なければ空 */
+    val candidate: String = "",
 ) {
     var status by mutableStateOf(Status.PENDING)
     var value by mutableStateOf(if (isFumei) "" else original)
@@ -111,8 +113,10 @@ object SokkiParser {
                 var segStart = 0
                 for (m in TAG_RE.findAll(t)) {
                     val isFumei = m.groupValues[2].isNotEmpty()
-                    val label = if (isFumei) "不明"
+                    val rawLabel = if (isFumei) "不明"
                     else m.groupValues[1].trim().ifEmpty { "要確認" }
+                    val label = rawLabel.substringBefore('→').trim()
+                    val candidateRaw = if (rawLabel.contains('→')) rawLabel.substringAfter('→').trim() else ""
                     val isGray = label.contains("誤変換")
                     var wNode = n
                     var wNodeIndex = i
@@ -152,6 +156,8 @@ object SokkiParser {
                         after = after,
                         searchKey = searchKey(before, after),
                         pos = paraBase + TAG_RE.replace(para.substring(0, absStart), "").length,
+                        // 語とタグが同じ文字装飾にあるときだけ、候補で語をそのまま置き換えられる
+                        candidate = if (wNode === n) candidateRaw else "",
                     )
                     segStart = m.range.last + 1
                 }

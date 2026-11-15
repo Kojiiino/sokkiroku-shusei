@@ -32,7 +32,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     var loadedOnce by mutableStateOf(false)
     var current by mutableStateOf<Drive.DFile?>(null)
     var parsed by mutableStateOf<ParsedDoc?>(null)
-    var showGray by mutableStateOf(false)
+    var showGray by mutableStateOf(true)
+    var showSearch by mutableStateOf(false)
     var savedName by mutableStateOf<String?>(null)
 
     // 同じ会議の中で使う置き換え（例：中継→中計）
@@ -91,7 +92,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val pd = withContext(Dispatchers.Default) { SokkiParser.parse(html) }
         current = f
         parsed = pd
-        showGray = false
+        showGray = true
         savedName = null
         loadDocPrefs(f.id)
         loadRules()
