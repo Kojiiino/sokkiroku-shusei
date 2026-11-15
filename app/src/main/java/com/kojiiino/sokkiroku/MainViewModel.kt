@@ -13,10 +13,11 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.time.LocalDate
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 
-enum class Screen { Files, Edit }
+enum class Screen { Files, Edit, Dict }
 
 /** 「ほかの箇所も直しますか」の提案 */
 class Proposal(val item: Item, val from: String, val to: String)
@@ -54,6 +55,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     var endMin by mutableStateOf("")
     var anchors by mutableStateOf<List<Pair<Int, Long>>>(emptyList())
 
+    // 辞書候補
+    var cands by mutableStateOf<List<Cand>>(emptyList())
+    var dict by mutableStateOf<Dictionary?>(null)
+    var dictPublished by mutableStateOf<String?>(null)
+    var poolCount by mutableStateOf(0)
+
     private var folderId: String? = null
     private val audioDir = File(app.filesDir, "audio").apply { mkdirs() }
     private val receivedFile = File(audioDir, "_received.audio")
@@ -84,6 +91,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         files = withContext(Dispatchers.IO) { Drive.listFiles(t, f) }
         draftIds = files.map { it.id }.filter { prefs.contains("draft:$it") }.toSet()
         loadedOnce = true
+        poolCount = loadPool().size
     }
 
     fun open(f: Drive.DFile) = task {
@@ -121,6 +129,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 name += "_" + LocalTime.now().format(DateTimeFormatter.ofPattern("HHmm"))
             }
             withContext(Dispatchers.IO) { Drive.createDoc(t, folder, name, html) }
+            addToPool(DictCodec.collect(pd, rs))
             clearDraft()
             savedName = name
         }
@@ -140,6 +149,101 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun finishSaved() {
         backToFiles()
         loadFiles()
+    }
+
+    // ---------- 辞書候補 ----------
+
+    private fun loadPool(): List<Cand> =
+        prefs.getString("pool", null)?.let { Cand.listFromJson(it) } ?: emptyList()
+
+    private fun savePool(l: List<Cand>) {
+        prefs.edit().putString("pool", Cand.listToJson(l)).apply()
+        poolCount = l.size
+    }
+
+    /** 保存した速記録から拾った候補を、たまっている候補に合流させる */
+    private fun addToPool(found: List<Cand>) {
+        if (found.isEmpty()) return
+        val pool = loadPool().toMutableList()
+        for (c in found) {
+            val ex = pool.firstOrNull { it.key == c.key }
+            if (ex == null) {
+                pool.add(c)
+            } else {
+                ex.seen += c.seen
+                ex.fixed += c.fixed
+                if (ex.ctx.isEmpty()) ex.ctx = c.ctx
+            }
+        }
+        savePool(pool)
+    }
+
+    /** 辞書候補の画面を開く。ドライブの最新の辞書を読んで、すでにある語は除く */
+    fun openDict() = task {
+        val t = token()
+        val f = folderId ?: withContext(Dispatchers.IO) { Drive.findFolder(t) }
+        folderId = f
+        val latest = withContext(Dispatchers.IO) { Drive.latestDictionary(t, f) }
+        dict = if (latest == null) {
+            Dictionary(0, emptyList(), emptyList(), emptyList())
+        } else {
+            val h = withContext(Dispatchers.IO) { Drive.exportHtml(t, latest.second.id) }
+            withContext(Dispatchers.Default) { DictCodec.parse(h, latest.first) }
+        }
+        val d = dict!!
+        cands = loadPool().filter { !d.knows(it.from) }.sortedByDescending { it.fixed }
+        dictPublished = null
+        screen = Screen.Dict
+    }
+
+    fun saveCands() {
+        // 画面に出ていない（辞書にすでにある）候補は、そのまま残す
+        val shown = cands.map { it.key }.toSet()
+        val rest = loadPool().filter { it.key !in shown }
+        savePool(rest + cands)
+    }
+
+    fun backFromDict() {
+        saveCands()
+        screen = Screen.Files
+    }
+
+    /** 決めた候補を、辞書の新しい版としてドライブに保存する */
+    fun publishDict() {
+        val d = dict ?: return
+        val decided = cands.filter { it.choice != Choice.NONE }
+        if (decided.isEmpty()) {
+            message = "A・B・入れない のどれかを選んだ候補がありません"
+            return
+        }
+        task {
+            val folder = folderId ?: throw IllegalStateException("保存先のフォルダが分かりません")
+            val t = token()
+            val date = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy/MM/dd"))
+            val a = d.a.toMutableList()
+            val b = d.b.toMutableList()
+            val r = d.rejected.toMutableList()
+            for (c in decided) {
+                when (c.choice) {
+                    Choice.A -> a.add(DictA(c.from, c.to, date))
+                    Choice.B -> b.add(DictB(c.from, c.to, c.cond.trim(), date))
+                    Choice.NO -> r.add("${c.from}→${c.to}（$date、Iさんが×。辞書には入れない）")
+                    Choice.NONE -> {}
+                }
+            }
+            val nd = Dictionary(d.version + 1, a, b, r)
+            val note = "アプリが修正内容から作った候補（${decided.size}件を判断）"
+            val html = withContext(Dispatchers.Default) { DictCodec.build(nd, date, note) }
+            val name = "用語辞書_承認済み_v${nd.version}"
+            withContext(Dispatchers.IO) { Drive.createDoc(t, folder, name, html) }
+            // 判断した候補を、たまっている候補から外す
+            val done = decided.map { it.key }.toSet()
+            val shown = cands.map { it.key }.toSet()
+            savePool(loadPool().filter { it.key !in shown } + cands.filter { it.key !in done })
+            cands = cands.filter { it.key !in done }
+            dict = nd
+            dictPublished = name
+        }
     }
 
     // ---------- 直す・置き換え ----------

@@ -73,6 +73,24 @@ object Drive {
         }
     }
 
+    /** 最新の「用語辞書_承認済み_vN」を探す。なければ null */
+    fun latestDictionary(token: String, folderId: String): Pair<Int, DFile>? {
+        val q = "'$folderId' in parents and trashed = false and " +
+            "mimeType = '$DOC_MIME' and name contains '用語辞書_承認済み_v'"
+        val url = "$API?q=${enc(q)}&fields=${enc("files(id,name,modifiedTime)")}&pageSize=100"
+        val a = JSONObject(request(url, token)).optJSONArray("files") ?: return null
+        val re = Regex("^用語辞書_承認済み_v(\\d+)$")
+        var best: Pair<Int, DFile>? = null
+        for (i in 0 until a.length()) {
+            val o = a.getJSONObject(i)
+            val n = re.find(o.getString("name"))?.groupValues?.get(1)?.toIntOrNull() ?: continue
+            if (best == null || n > best.first) {
+                best = n to DFile(o.getString("id"), o.getString("name"), o.optString("modifiedTime"))
+            }
+        }
+        return best
+    }
+
     fun exportHtml(token: String, fileId: String): String =
         request("$API/$fileId/export?mimeType=${enc("text/html")}", token)
 

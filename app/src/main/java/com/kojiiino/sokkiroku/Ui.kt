@@ -93,6 +93,7 @@ fun App(vm: MainViewModel) {
     when (vm.screen) {
         Screen.Files -> FilesScreen(vm)
         Screen.Edit -> EditScreen(vm)
+        Screen.Dict -> DictScreen(vm)
     }
     val msg = vm.message
     if (msg != null) {
@@ -126,6 +127,12 @@ fun FilesScreen(vm: MainViewModel) {
                 title = { Text("速記録の修正") },
                 colors = barColors(),
                 actions = {
+                    TextButton(onClick = { vm.openDict() }, enabled = !vm.busy) {
+                        Text(
+                            if (vm.poolCount > 0) "辞書候補(${vm.poolCount})" else "辞書候補",
+                            color = Color.White,
+                        )
+                    }
                     TextButton(onClick = { vm.loadFiles() }, enabled = !vm.busy) {
                         Text("再読込", color = Color.White)
                     }
@@ -711,4 +718,127 @@ private fun formatTime(s: String): String = try {
     DateTimeFormatter.ofPattern("yyyy/MM/dd HH:mm").format(t)
 } catch (e: Exception) {
     s
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun DictScreen(vm: MainViewModel) {
+    BackHandler { vm.backFromDict() }
+    val d = vm.dict
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("用語辞書の候補") },
+                colors = barColors(),
+                navigationIcon = {
+                    TextButton(onClick = { vm.backFromDict() }) {
+                        Text("戻る", color = Color.White)
+                    }
+                },
+            )
+        },
+        bottomBar = {
+            BottomAppBar(containerColor = TitleBg) {
+                val n = vm.cands.count { it.choice != Choice.NONE }
+                Text(
+                    "判断済み $n／${vm.cands.size}件",
+                    Modifier.padding(start = 12.dp).weight(1f),
+                    color = Navy,
+                    fontWeight = FontWeight.Bold,
+                )
+                Button(
+                    onClick = { vm.publishDict() },
+                    enabled = !vm.busy && n > 0,
+                    modifier = Modifier.padding(end = 12.dp),
+                ) { Text("辞書の新しい版を作る") }
+            }
+        },
+    ) { pad ->
+        Column(Modifier.padding(pad).fillMaxSize()) {
+            if (vm.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+            if (d != null) {
+                Text(
+                    if (d.version == 0) "ドライブに辞書がまだありません（v1から作ります）"
+                    else "現在の辞書：v${d.version}（A ${d.a.size}件／B ${d.b.size}件）",
+                    Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                    color = Gray90,
+                    fontSize = 13.sp,
+                )
+            }
+            val pub = vm.dictPublished
+            if (pub != null) {
+                Text(
+                    "「$pub」をドライブに作りました。速記録スキルへの反映は、" +
+                        "Claudeに「用語辞書を速記録スキルに反映して」と頼んでください。",
+                    Modifier.fillMaxWidth().background(Mark).padding(12.dp),
+                    fontSize = 14.sp,
+                )
+            }
+            if (vm.cands.isEmpty() && !vm.busy) {
+                Text(
+                    "判断待ちの候補はありません。速記録を保存すると、直した語がここにたまります。",
+                    Modifier.padding(16.dp),
+                )
+            }
+            LazyColumn(Modifier.fillMaxSize().imePadding()) {
+                items(vm.cands, key = { it.key }) { c -> CandCard(c) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CandCard(c: Cand) {
+    Card(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 5.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        border = BorderStroke(1.dp, Blue80),
+    ) {
+        Column(Modifier.padding(12.dp)) {
+            Text(
+                "${c.from}  →  ${c.to}",
+                fontWeight = FontWeight.Bold,
+                fontSize = 17.sp,
+                color = Ink,
+            )
+            if (c.ctx.isNotEmpty()) {
+                Text("「${c.ctx}」", color = Gray90, fontSize = 13.sp)
+            }
+            Text(
+                "出現${c.seen}回／直した${c.fixed}回" +
+                    if (c.seen > c.fixed) "（直していない箇所あり）" else "",
+                color = Gray90,
+                fontSize = 12.sp,
+            )
+            Spacer(Modifier.height(6.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                ChoiceButton("A 置換", c.choice == Choice.A) {
+                    c.choice = if (c.choice == Choice.A) Choice.NONE else Choice.A
+                }
+                ChoiceButton("B 候補のみ", c.choice == Choice.B) {
+                    c.choice = if (c.choice == Choice.B) Choice.NONE else Choice.B
+                }
+                ChoiceButton("入れない", c.choice == Choice.NO) {
+                    c.choice = if (c.choice == Choice.NO) Choice.NONE else Choice.NO
+                }
+            }
+            if (c.choice == Choice.B) {
+                OutlinedTextField(
+                    value = c.cond,
+                    onValueChange = { c.cond = it },
+                    label = { Text("載せる条件（空なら「常に」）") },
+                    modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ChoiceButton(label: String, on: Boolean, onClick: () -> Unit) {
+    if (on) {
+        Button(onClick = onClick) { Text(label, fontSize = 13.sp) }
+    } else {
+        OutlinedButton(onClick = onClick) { Text(label, fontSize = 13.sp) }
+    }
 }
