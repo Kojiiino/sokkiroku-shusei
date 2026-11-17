@@ -405,6 +405,11 @@ fun AudioPanel(vm: MainViewModel) {
                     color = Ink,
                 )
             }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = { vm.pickAudio?.invoke() }) { Text("録音を選び直す") }
+                Spacer(Modifier.weight(1f))
+                TextButton(onClick = { vm.removeAudio() }) { Text("録音を外す") }
+            }
         } else {
             Text(
                 "録音を取り込むと、各箇所を聞けます。レコーダーで録音を開き、" +

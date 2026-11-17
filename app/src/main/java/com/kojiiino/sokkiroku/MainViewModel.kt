@@ -491,6 +491,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         loadAudioFor(f.id)
     }
 
+    /** この速記録に取り込んだ録音を外す（選び間違えたとき） */
+    fun removeAudio() {
+        val f = current ?: return
+        player.release()
+        audioFileFor(f.id).delete()
+        audioReady = false
+        durationMs = null
+        anchors = emptyList()
+        saveDocPrefs()
+    }
+
     private fun loadAudioFor(docId: String) {
         val file = audioFileFor(docId)
         if (!file.exists()) {
