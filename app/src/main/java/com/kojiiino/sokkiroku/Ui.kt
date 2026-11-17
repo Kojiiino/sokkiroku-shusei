@@ -378,7 +378,8 @@ fun EditScreen(vm: MainViewModel) {
 
 @Composable
 fun AudioPanel(vm: MainViewModel) {
-    var showAdjust by remember { mutableStateOf(false) }
+    // ふだんは1行に畳んでおく
+    var expanded by remember { mutableStateOf(false) }
     var pos by remember { mutableLongStateOf(0L) }
     LaunchedEffect(vm.audioReady) {
         while (vm.audioReady) {
@@ -387,39 +388,46 @@ fun AudioPanel(vm: MainViewModel) {
         }
     }
     Column(
-        Modifier.fillMaxWidth().background(TitleBg).padding(horizontal = 12.dp, vertical = 6.dp)
+        Modifier.fillMaxWidth().background(TitleBg).padding(horizontal = 12.dp)
     ) {
-        if (vm.audioReady) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                OutlinedButton(onClick = { vm.player.skip(-10_000) }) { Text("－10秒") }
-                Spacer(Modifier.width(6.dp))
-                Button(onClick = { vm.player.toggle() }) {
-                    Text(if (vm.player.playing) "一時停止" else "再生")
-                }
-                Spacer(Modifier.width(6.dp))
-                OutlinedButton(onClick = { vm.player.skip(10_000) }) { Text("＋10秒") }
-                Spacer(Modifier.weight(1f))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (vm.audioReady) {
+                Button(
+                    onClick = { vm.player.toggle() },
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp),
+                ) { Text(if (vm.player.playing) "一時停止" else "再生") }
+                Spacer(Modifier.width(10.dp))
                 Text(
                     "${fmtTime(pos)}／${fmtTime(vm.durationMs ?: 0L)}",
                     fontSize = 13.sp,
                     color = Ink,
                 )
-            }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                TextButton(onClick = { vm.pickAudio?.invoke() }) { Text("録音を選び直す") }
-                Spacer(Modifier.weight(1f))
-                TextButton(onClick = { vm.removeAudio() }) { Text("録音を外す") }
-            }
-        } else {
-            Text(
-                "録音を取り込むと、各箇所を聞けます。レコーダーで録音を開き、" +
-                    "「共有 → ファイル → 音声」でこのアプリを選んでください。",
-                fontSize = 13.sp,
-                color = Ink,
-            )
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            } else {
+                Text("録音なし", fontSize = 13.sp, color = Ink)
                 TextButton(onClick = { vm.pickAudio?.invoke() }) { Text("ファイルから選ぶ") }
-                Spacer(Modifier.weight(1f))
+            }
+            Spacer(Modifier.weight(1f))
+            TextButton(onClick = { expanded = !expanded }) {
+                Text(if (expanded) "録音の設定を閉じる ▲" else "録音の設定 ▼", fontSize = 13.sp)
+            }
+        }
+        if (expanded) {
+            if (vm.audioReady) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedButton(onClick = { vm.player.skip(-10_000) }) { Text("－10秒") }
+                    Spacer(Modifier.width(6.dp))
+                    OutlinedButton(onClick = { vm.player.skip(10_000) }) { Text("＋10秒") }
+                    Spacer(Modifier.weight(1f))
+                    TextButton(onClick = { vm.pickAudio?.invoke() }) { Text("選び直す") }
+                    TextButton(onClick = { vm.removeAudio() }) { Text("外す") }
+                }
+            } else {
+                Text(
+                    "録音を取り込むと、各箇所を聞けます。レコーダーで録音を開き、" +
+                        "「共有 → ファイル → 音声」でこのアプリを選んでください。",
+                    fontSize = 13.sp,
+                    color = Ink,
+                )
                 OutlinedTextField(
                     value = vm.manualMinutes,
                     onValueChange = {
@@ -431,13 +439,9 @@ fun AudioPanel(vm: MainViewModel) {
                     modifier = Modifier.width(150.dp),
                 )
             }
-        }
-        TextButton(onClick = { showAdjust = !showAdjust }) {
-            Text(if (showAdjust) "位置の調整を閉じる" else "位置の調整（パート分けのとき）")
-        }
-        if (showAdjust) {
             Text(
-                "この速記録が録音の途中から始まる場合（パート02など）は、開始と終了を分で入れます。",
+                "位置の調整：この速記録が録音の途中から始まる場合（パート02など）は、" +
+                    "開始と終了を分で入れます。",
                 fontSize = 12.sp,
                 color = Gray90,
             )
