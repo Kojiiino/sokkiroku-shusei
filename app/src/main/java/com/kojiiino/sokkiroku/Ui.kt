@@ -639,24 +639,27 @@ fun ItemCard(
             }
             Spacer(Modifier.height(8.dp))
             Text(contextText(item), fontSize = 15.sp, lineHeight = 24.sp, color = Ink)
-            if (estimate != null) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (audioReady) {
-                        TextButton(onClick = onPlay) { Text("約${fmtTime(estimate)}から聞く") }
-                        Spacer(Modifier.weight(1f))
-                        TextButton(onClick = onAnchor) { Text("今の再生位置を基準に") }
-                    } else {
-                        Text(
-                            "録音の約${fmtTime(estimate)}あたり",
-                            fontSize = 13.sp,
-                            color = Navy,
-                            modifier = Modifier.padding(vertical = 6.dp),
-                        )
+            val listenRow: @Composable () -> Unit = {
+                if (estimate != null) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (audioReady) {
+                            TextButton(onClick = onPlay) { Text("約${fmtTime(estimate)}から聞く") }
+                            Spacer(Modifier.weight(1f))
+                            TextButton(onClick = onAnchor) { Text("今の再生位置を基準に") }
+                        } else {
+                            Text(
+                                "録音の約${fmtTime(estimate)}あたり",
+                                fontSize = 13.sp,
+                                color = Navy,
+                                modifier = Modifier.padding(vertical = 6.dp),
+                            )
+                        }
                     }
                 }
             }
             Spacer(Modifier.height(8.dp))
             if (pending) {
+                // キーボードが出ても押せるよう、ボタンを入力欄より上に置く
                 if (item.candidate.isNotEmpty()) {
                     Button(
                         onClick = {
@@ -666,6 +669,19 @@ fun ItemCard(
                         modifier = Modifier.padding(bottom = 6.dp),
                     ) { Text("候補「${item.candidate}」にする") }
                 }
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Button(
+                        onClick = onFix,
+                        enabled = !(item.isFumei && item.value.isBlank()),
+                    ) { Text("直す") }
+                    OutlinedButton(onClick = { item.status = Status.KEEP }) {
+                        Text(if (item.isFumei) "不明のまま" else "このまま")
+                    }
+                }
+                listenRow()
                 OutlinedTextField(
                     value = item.value,
                     onValueChange = { item.value = it },
@@ -680,19 +696,8 @@ fun ItemCard(
                     },
                     modifier = Modifier.fillMaxWidth(),
                 )
-                Row(
-                    Modifier.fillMaxWidth().padding(top = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Button(
-                        onClick = onFix,
-                        enabled = !(item.isFumei && item.value.isBlank()),
-                    ) { Text("直す") }
-                    OutlinedButton(onClick = { item.status = Status.KEEP }) {
-                        Text(if (item.isFumei) "不明のまま" else "このまま")
-                    }
-                }
             } else {
+                listenRow()
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(resultText(item), Modifier.weight(1f), fontSize = 14.sp, color = Ink)
                     TextButton(onClick = { item.status = Status.PENDING }) { Text("やり直す") }
